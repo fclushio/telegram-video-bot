@@ -25,7 +25,7 @@ bash install.sh
 nano /etc/telegram-video-bot.env
 ```
 
-Replace `YOUR_BOT_TOKEN_HERE` in `BOT_TOKEN`. Leave `ALLOWED_CHAT_IDS` empty for your first run.
+Replace `YOUR_BOT_TOKEN_HERE` in `BOT_TOKEN`. Leave `ALLOWED_CHAT_IDS` empty for your first run (only `/id` works without an allowlist). To enable downloads in **all** chats, set `ALLOWED_CHAT_IDS=*` instead. This allows anyone who can message or add the bot to a group to initiate downloads, so use it only if that is acceptable.
 
 ```bash
 systemctl start telegram-video-bot
@@ -67,7 +67,7 @@ systemctl restart telegram-video-bot
 
 * One URL/video per source message; `.mp4` is sent as an inline Telegram video, another format as a document.
 * Download jobs run one at a time with at most three outstanding jobs, to avoid excessive RAM/disk use. Files are deleted after upload, including failed downloads. Playlists are restricted to one entry.
-* Only chat IDs listed in `ALLOWED_CHAT_IDS` can trigger downloads; everyone can use `/id` to look up their chat ID.
+* Only chat IDs listed in `ALLOWED_CHAT_IDS` can trigger downloads, unless it is set to `*` (all groups and private chats). A blank value disables downloads; everyone can use `/id` to look up their chat ID. For a public bot, prefer the explicit allowlist to prevent uncontrolled download jobs.
 * Automatic and manual URLs must match `DEFAULT_DOMAINS` (in `bot.py`) or `EXTRA_DOMAINS` (in env). This is intentional; `yt-dlp` has a generic extractor and it is unsafe to blindly fetch every link submitted to a bot inside a homelab. Add sites explicitly to `EXTRA_DOMAINS`.
 * Some sites require authenticated cookies or break extractors. This first version intentionally does **not** load browser cookies or accept arbitrary user-supplied proxy/cookie options.
 * There is no Telegram file-ID cache, auto bitrate recompression, or self-hosted Bot API yet. They are natural later improvements.
