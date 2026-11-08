@@ -18,14 +18,15 @@ apt-get install -y python3 python3-venv python3-pip ffmpeg ca-certificates curl 
 if ! command -v deno >/dev/null 2>&1; then
   td=$(mktemp -d)
   trap 'rm -rf "$td"' EXIT
+  deno_archive=deno-x86_64-unknown-linux-gnu.zip
   curl --fail --location --silent --show-error \
-    https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip \
-    --output "$td/deno.zip"
+    "https://github.com/denoland/deno/releases/latest/download/$deno_archive" \
+    --output "$td/$deno_archive"
   curl --fail --location --silent --show-error \
-    https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip.sha256sum \
-    --output "$td/deno.zip.sha256sum"
-  (cd "$td" && sha256sum -c deno.zip.sha256sum)
-  unzip -q "$td/deno.zip" -d "$td"
+    "https://github.com/denoland/deno/releases/latest/download/$deno_archive.sha256sum" \
+    --output "$td/$deno_archive.sha256sum"
+  (cd "$td" && sha256sum -c "$deno_archive.sha256sum")
+  unzip -q "$td/$deno_archive" -d "$td"
   install -m 0755 "$td/deno" /usr/local/bin/deno
 fi
 
