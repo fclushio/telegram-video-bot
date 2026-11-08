@@ -2,10 +2,12 @@
 """Small Telegram yt-dlp responder (standard, hosted Telegram Bot API)."""
 
 import asyncio
+import json
 import logging
 import os
 import signal
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -41,12 +43,32 @@ MAX_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", "47000000"))
 DOWNLOAD_TIMEOUT = int(os.environ.get("DOWNLOAD_TIMEOUT_SECONDS", "240"))
 MAX_PENDING = int(os.environ.get("MAX_PENDING", "3"))
 WORK_DIR = Path(os.environ.get("WORK_DIR", "/var/lib/telegram-video-bot/jobs"))
+AUDIT_LOG = Path(os.environ.get("AUDIT_LOG", "/var/lib/telegram-video-bot/downloads.jsonl"))
 SEMAPHORE = asyncio.Semaphore(1)
 _pending = 0
 
 
 def permitted(message: Message) -> bool:
     return ALLOW_ALL_CHATS or message.chat_id in CHAT_IDS
+
+
+def audit_event(message: Message, url: str, event: str, **details: object) -> None:
+    """Record a download attempt/outcome in journald and an append-only JSONL history."""
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+        "chat_id": message.chat_id,
+        "message_id": message.message_id,
+        "url": url,
+        **details,
+    }
+    encoded = json.dumps(record, ensure_ascii=True)
+    LOG.info("video_audit %s", encoded)
+    try:
+        with AUDIT_LOG.open("a", encoding="utf-8") as stream:
+            stream.write(encoded + "\n")
+    except OSError:
+        LOG.exception("Failed to write video audit history")
 
 
 async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -117,7 +139,9 @@ async def run_yt_dlp(url: str, folder: Path, fmt: str) -> tuple[Path | None, str
 
 async def perform_download(msg: Message, url: str) -> None:
     global _pending
+    audit_event(msg, url, "requested")
     if _pending >= MAX_PENDING:
+        audit_event(msg, url, "rejected", reason="queue_full")
         await msg.reply_text("Download queue is full. Try again after another video finishes.")
         return
     _pending += 1
@@ -145,9 +169,13 @@ async def perform_download(msg: Message, url: str) -> None:
                     with file.open("rb") as stream:
                         opts = dict(caption=None, reply_parameters=reply, read_timeout=240, write_timeout=240)
                         if file.suffix.lower() == ".mp4":
-                            await msg.reply_video(video=stream, supports_streaming=True, **opts)
+                            sent = await msg.reply_video(video=stream, supports_streaming=True, **opts)
                         else:
-                            await msg.reply_document(document=stream, filename=file.name, **opts)
+                            sent = await msg.reply_document(document=stream, filename=file.name, **opts)
+                    audit_event(
+                        msg, url, "uploaded", quality=label,
+                        size_bytes=file.stat().st_size, telegram_message_id=sent.message_id,
+                    )
                     if status:
                         try:
                             await status.delete()
@@ -156,17 +184,23 @@ async def perform_download(msg: Message, url: str) -> None:
                     return
 
                 if "timeout" in reasons:
+                    result_reason = "timeout"
                     response = "Download timed out."
                 elif "large" in reasons:
+                    result_reason = "large"
                     response = "This video is too large for the standard Telegram Bot API (~47 MB safe upload limit)."
                 elif "unsupported" in reasons:
+                    result_reason = "unsupported"
                     response = "This site or link type isn't supported by yt-dlp."
                 else:
+                    result_reason = "failed"
                     response = "Couldn't download this video. It may be private, geo-blocked, require a login, or the site may have changed."
+                audit_event(msg, url, "failed", reason=result_reason)
                 if status:
                     await status.edit_text(response)
     except TelegramError:
         LOG.exception("Telegram upload or reply failed")
+        audit_event(msg, url, "failed", reason="telegram_error")
         if status:
             try:
                 await status.edit_text("Downloaded the video, but Telegram couldn't accept the upload.")
@@ -174,6 +208,7 @@ async def perform_download(msg: Message, url: str) -> None:
                 pass
     except (OSError, ValueError):
         LOG.exception("Local download failure")
+        audit_event(msg, url, "failed", reason="local_error")
         if status:
             try:
                 await status.edit_text("The local downloader encountered an error. See service logs.")
@@ -225,6 +260,7 @@ def main() -> None:
     if MAX_BYTES < 1 or MAX_PENDING < 1 or DOWNLOAD_TIMEOUT < 1:
         raise SystemExit("Invalid size, queue, or timeout configuration")
     WORK_DIR.mkdir(parents=True, exist_ok=True)
+    AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
     if not ALLOW_ALL_CHATS and not CHAT_IDS:
         LOG.warning("ALLOWED_CHAT_IDS is empty: only /id responds until you allow a chat")
     app = Application.builder().token(TOKEN).build()
