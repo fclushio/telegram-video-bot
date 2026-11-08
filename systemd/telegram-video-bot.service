@@ -1,0 +1,33 @@
+[Unit]
+Description=Telegram video downloader bot (yt-dlp)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=telegram-video-bot
+Group=telegram-video-bot
+WorkingDirectory=/opt/telegram-video-bot
+EnvironmentFile=/etc/telegram-video-bot.env
+Environment="HOME=/var/lib/telegram-video-bot"
+Environment="DENO_DIR=/var/lib/telegram-video-bot/deno-cache"
+Environment="PATH=/opt/telegram-video-bot/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/telegram-video-bot/.venv/bin/python /opt/telegram-video-bot/bot.py
+Restart=on-failure
+RestartSec=10
+StateDirectory=telegram-video-bot
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
