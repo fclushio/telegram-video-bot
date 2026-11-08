@@ -10,6 +10,7 @@ if [[ $(uname -m) != x86_64 ]]; then
   exit 1
 fi
 
+export PATH="/usr/local/bin:$PATH"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y python3 python3-venv python3-pip ffmpeg ca-certificates curl unzip
@@ -52,7 +53,11 @@ systemctl enable telegram-video-bot.service
 
 echo
 /opt/telegram-video-bot/.venv/bin/yt-dlp --version
-deno --version | head -n 1 || true
+if ! command -v deno >/dev/null 2>&1; then
+  echo 'Deno was installed but is not available on PATH.' >&2
+  exit 1
+fi
+deno --version | head -n 1
 echo 'Installed. Edit /etc/telegram-video-bot.env and then:'
 echo '  systemctl restart telegram-video-bot'
 echo '  journalctl -u telegram-video-bot -f'
