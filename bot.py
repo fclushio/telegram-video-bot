@@ -26,12 +26,15 @@ FORMATS = (
 )
 
 TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+CHAT_ID_CONFIG = os.environ.get("ALLOWED_CHAT_IDS", "").strip()
+ALLOW_ALL_CHATS = CHAT_ID_CONFIG == "*"
 CHAT_IDS = set()
-for _id in csv_set(os.environ.get("ALLOWED_CHAT_IDS", "")):
-    try:
-        CHAT_IDS.add(int(_id))
-    except ValueError as exc:
-        raise SystemExit("ALLOWED_CHAT_IDS must contain numeric Telegram chat IDs") from exc
+if not ALLOW_ALL_CHATS:
+    for _id in csv_set(CHAT_ID_CONFIG):
+        try:
+            CHAT_IDS.add(int(_id))
+        except ValueError as exc:
+            raise SystemExit("ALLOWED_CHAT_IDS must contain numeric Telegram chat IDs or be '*'") from exc
 
 DOMAINS = DEFAULT_DOMAINS | csv_set(os.environ.get("EXTRA_DOMAINS", ""))
 MAX_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", "47000000"))
@@ -43,7 +46,7 @@ _pending = 0
 
 
 def permitted(message: Message) -> bool:
-    return message.chat_id in CHAT_IDS
+    return ALLOW_ALL_CHATS or message.chat_id in CHAT_IDS
 
 
 async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -222,14 +225,17 @@ def main() -> None:
     if MAX_BYTES < 1 or MAX_PENDING < 1 or DOWNLOAD_TIMEOUT < 1:
         raise SystemExit("Invalid size, queue, or timeout configuration")
     WORK_DIR.mkdir(parents=True, exist_ok=True)
-    if not CHAT_IDS:
+    if not ALLOW_ALL_CHATS and not CHAT_IDS:
         LOG.warning("ALLOWED_CHAT_IDS is empty: only /id responds until you allow a chat")
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("id", id_command))
     app.add_handler(CommandHandler(["start", "help"], help_command))
     app.add_handler(CommandHandler("dl", dl_command, block=False))
     app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, auto_detect, block=False))
-    LOG.info("Starting Telegram video bot; configured chat IDs: %d", len(CHAT_IDS))
+    LOG.info(
+        "Starting Telegram video bot; allowed chats: %s",
+        "all" if ALLOW_ALL_CHATS else str(len(CHAT_IDS)),
+    )
     app.run_polling(allowed_updates=["message"], drop_pending_updates=True)
 
 
