@@ -63,6 +63,27 @@ To update only the downloader, run:
 systemctl restart telegram-video-bot
 ```
 
+## Download history
+
+Downloaded files are temporary and are deleted after each job, even if the upload fails. By default they are created beneath `/var/lib/telegram-video-bot/jobs/`.
+
+The bot logs each accepted request and its eventual outcome to both systemd's journal and an append-only JSONL history:
+
+```bash
+# Live journal (each record includes the chat ID, Telegram source message ID and URL)
+journalctl -u telegram-video-bot -f
+
+# Persistent JSONL file, readable by root (or the service user)
+tail -f /var/lib/telegram-video-bot/downloads.jsonl
+
+# Show historical URLs and chat IDs with jq (install jq if necessary)
+jq -r 'select(.event == "requested") | [.timestamp, .chat_id, .url] | @tsv' /var/lib/telegram-video-bot/downloads.jsonl
+```
+
+Events: `requested`, `rejected` (queue full), `uploaded` (with quality, size and Telegram output message ID), and `failed` (with reason). Change the history path with `AUDIT_LOG` in `/etc/telegram-video-bot.env`. The existing credentials file is preserved during installation.
+
+**Privacy:** These logs include the entire URL, including query parameters that may contain personal or access tokens. Treat the history as sensitive and restrict access. The systemd service uses `UMask=0077`, so newly created history files are accessible only to the service account; root can inspect them too. The JSONL file is not automatically rotated, so manage retention if the bot becomes busy.
+
 ## Behavior and limitations
 
 * One URL/video per source message; `.mp4` is sent as an inline Telegram video, another format as a document.
