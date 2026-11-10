@@ -41,6 +41,42 @@ class ChatModeTests(unittest.TestCase):
         self.assertIn("bestaudio/best", cmd)
         self.assertEqual(cmd[-2:], ["--", "https://youtu.be/example"])
 
+    def test_only_youtube_mp3_embeds_thumbnail(self):
+        youtube_urls = (
+            "https://www.youtube.com/watch?v=123",
+            "https://music.youtube.com/watch?v=123",
+            "https://m.youtube.com/shorts/123",
+            "https://youtu.be/123",
+            "https://www.youtube-nocookie.com/embed/123",
+        )
+        other_urls = (
+            "https://www.tiktok.com/@example/video/123",
+            "https://www.instagram.com/reel/123/",
+            "https://youtube.com.evil.example/video",
+            "https://notyoutube.com/video",
+            "https://youtu.be.evil.example/123",
+        )
+        for url in youtube_urls:
+            with self.subTest(url=url):
+                cmd = bot.build_yt_dlp_command(url, Path("/tmp/audio"), "unused", mode="mp3")
+                self.assertIn("--embed-thumbnail", cmd)
+                self.assertIn("--convert-thumbnails", cmd)
+                self.assertEqual(cmd[cmd.index("--convert-thumbnails") + 1], "jpg")
+                self.assertIn("--embed-metadata", cmd)
+        for url in other_urls:
+            with self.subTest(url=url):
+                cmd = bot.build_yt_dlp_command(url, Path("/tmp/audio"), "unused", mode="mp3")
+                self.assertNotIn("--embed-thumbnail", cmd)
+                self.assertNotIn("--convert-thumbnails", cmd)
+                self.assertIn("--embed-metadata", cmd)
+
+    def test_youtube_video_does_not_embed_thumbnail(self):
+        cmd = bot.build_yt_dlp_command(
+            "https://youtu.be/123", Path("/tmp/video"), "bv+ba", mode="video"
+        )
+        self.assertNotIn("--embed-thumbnail", cmd)
+        self.assertNotIn("--convert-thumbnails", cmd)
+
     def test_video_command_keeps_existing_pipeline(self):
         cmd = bot.build_yt_dlp_command(
             "https://youtu.be/example", Path("/tmp/video"), "bv+ba", mode="video"
