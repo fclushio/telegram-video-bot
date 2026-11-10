@@ -38,7 +38,7 @@ fi
 install -d -m 0750 -o "$auser" -g "$auser" /var/lib/telegram-video-bot
 install -d -m 0750 -o "$auser" -g "$auser" /var/lib/telegram-video-bot/jobs
 install -d -m 0755 /opt/telegram-video-bot
-cp -f bot.py url_helpers.py requirements.txt /opt/telegram-video-bot/
+cp -f bot.py chat_modes.py url_helpers.py requirements.txt /opt/telegram-video-bot/
 python3 -m venv /opt/telegram-video-bot/.venv
 /opt/telegram-video-bot/.venv/bin/pip install --upgrade pip
 /opt/telegram-video-bot/.venv/bin/pip install --upgrade -r /opt/telegram-video-bot/requirements.txt
