@@ -49,6 +49,23 @@ class ChatModeTests(unittest.TestCase):
         self.assertNotIn("--extract-audio", cmd)
         self.assertIn("bv+ba", cmd)
 
+    def test_mp3_uses_source_title_in_filename_and_embeds_metadata(self):
+        cmd = bot.build_yt_dlp_command(
+            "https://youtu.be/example", Path("/tmp/audio"), "unused", mode="mp3"
+        )
+        template = cmd[cmd.index("--output") + 1]
+        self.assertEqual(template, "/tmp/audio/%(title).180B.%(ext)s")
+        self.assertIn("--embed-metadata", cmd)
+        self.assertNotIn("audio.%(ext)s", template)
+
+    def test_video_uses_source_title_in_filename(self):
+        cmd = bot.build_yt_dlp_command(
+            "https://youtu.be/example", Path("/tmp/video"), "best", mode="video"
+        )
+        template = cmd[cmd.index("--output") + 1]
+        self.assertEqual(template, "/tmp/video/%(title).180B.%(ext)s")
+        self.assertNotIn("video.%(ext)s", template)
+
 
 class ModeAuthorizationTests(unittest.IsolatedAsyncioTestCase):
     async def test_private_chat_is_authorized(self):
