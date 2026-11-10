@@ -145,12 +145,13 @@ def build_yt_dlp_command(url: str, folder: Path, fmt: str, mode: str = "video") 
     if mode == "mp3":
         command += [
             "--extract-audio", "--audio-format", "mp3", "--audio-quality", "5",
-            "--format", "bestaudio/best", "--output", str(folder / "audio.%(ext)s"),
+            "--embed-metadata",
+            "--format", "bestaudio/best", "--output", str(folder / "%(title).180B.%(ext)s"),
         ]
     else:
         command += [
             "--merge-output-format", "mp4", "--remux-video", "mp4",
-            "--format", fmt, "--output", str(folder / "video.%(ext)s"),
+            "--format", fmt, "--output", str(folder / "%(title).180B.%(ext)s"),
         ]
     return command + ["--print", "after_move:filepath", "--", url]
 
@@ -225,7 +226,9 @@ async def perform_download(msg: Message, url: str, mode: str = "video") -> None:
                     with file.open("rb") as stream:
                         opts = dict(caption=None, reply_parameters=reply, read_timeout=240, write_timeout=240)
                         if mode == "mp3":
-                            sent = await msg.reply_audio(audio=stream, filename=file.name, **opts)
+                            sent = await msg.reply_audio(
+                                audio=stream, filename=file.name, title=file.stem, **opts
+                            )
                         elif file.suffix.lower() == ".mp4":
                             sent = await msg.reply_video(video=stream, supports_streaming=True, **opts)
                         else:
