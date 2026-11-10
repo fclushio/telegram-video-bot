@@ -12,13 +12,15 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from telegram import Message, ReplyParameters, Update
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from chat_modes import get_mode, initialize, set_mode
 from url_helpers import DEFAULT_DOMAINS, csv_set, extract_urls, host_allowed
 
 LOG = logging.getLogger("telegram_video_bot")
+YOUTUBE_DOMAINS = frozenset({"youtube.com", "youtu.be", "youtube-nocookie.com"})
+TELEGRAM_THUMBNAIL_MAX_BYTES = 200_000
 
 # A finite list is intentional: accepting URLs to any arbitrary host is unsafe
 # when a service downloads remotely supplied resources from a homelab.
@@ -150,7 +152,7 @@ def build_yt_dlp_command(url: str, folder: Path, fmt: str, mode: str = "video") 
         ]
         # Embed the video's thumbnail as MP3 cover art for YouTube only.
         # Convert WebP/other formats to JPG for broad player compatibility.
-        if host_allowed(url, {"youtube.com", "youtu.be", "youtube-nocookie.com"}):
+        if host_allowed(url, YOUTUBE_DOMAINS):
             command += ["--embed-thumbnail", "--convert-thumbnails", "jpg"]
     else:
         command += [
@@ -195,6 +197,74 @@ async def run_yt_dlp(url: str, folder: Path, fmt: str, mode: str = "video") -> t
     return None, "failed"
 
 
+def build_telegram_thumbnail_command(audio: Path, destination: Path) -> list[str]:
+    """Extract embedded MP3 cover into a 320x320 JPEG for Telegram sendAudio."""
+    return [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-i", str(audio),
+        "-map", "0:v:0", "-frames:v", "1",
+        "-vf", "scale=320:320:force_original_aspect_ratio=decrease,"
+               "pad=320:320:(ow-iw)/2:(oh-ih)/2:black",
+        "-q:v", "5", "-update", "1", str(destination),
+    ]
+
+
+async def prepare_telegram_thumbnail(audio: Path, destination: Path) -> Path | None:
+    """Create an optional Telegram preview, leaving embedded MP3 artwork intact."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *build_telegram_thumbnail_command(audio, destination),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=20)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            LOG.warning("Telegram thumbnail extraction timed out; uploading MP3 normally")
+            return None
+    except OSError:
+        LOG.warning("Telegram thumbnail extraction unavailable; uploading MP3 normally")
+        return None
+
+    if proc.returncode:
+        LOG.warning("Cannot extract embedded MP3 cover; uploading MP3 normally")
+        return None
+    try:
+        if not 0 < destination.stat().st_size < TELEGRAM_THUMBNAIL_MAX_BYTES:
+            LOG.warning("Telegram thumbnail outside size limit; uploading MP3 normally")
+            return None
+        with destination.open("rb") as cover:
+            if cover.read(3) != bytes((0xff, 0xd8, 0xff)):
+                LOG.warning("Telegram thumbnail is not a JPEG; uploading MP3 normally")
+                return None
+        return destination
+    except OSError:
+        LOG.warning("Telegram thumbnail missing; uploading MP3 normally")
+        return None
+
+
+async def send_mp3(
+    msg: Message, audio: Path, opts: dict, thumbnail: Path | None = None
+) -> Message:
+    """Use explicit artwork when available; retry without it if Telegram rejects it."""
+    with audio.open("rb") as stream:
+        if thumbnail is not None:
+            with thumbnail.open("rb") as cover:
+                try:
+                    return await msg.reply_audio(
+                        audio=stream, filename=audio.name, title=audio.stem,
+                        thumbnail=cover, **opts,
+                    )
+                except BadRequest:
+                    LOG.warning("Telegram rejected supplied cover; retrying MP3 without thumbnail")
+                    stream.seek(0)
+        return await msg.reply_audio(
+            audio=stream, filename=audio.name, title=audio.stem, **opts,
+        )
+
+
 async def perform_download(msg: Message, url: str, mode: str = "video") -> None:
     global _pending
     if mode not in {"video", "mp3"}:
@@ -227,16 +297,20 @@ async def perform_download(msg: Message, url: str, mode: str = "video") -> None:
                         reasons.append("large")
                         continue
                     reply = ReplyParameters(message_id=msg.message_id, allow_sending_without_reply=True)
-                    with file.open("rb") as stream:
-                        opts = dict(caption=None, reply_parameters=reply, read_timeout=240, write_timeout=240)
-                        if mode == "mp3":
-                            sent = await msg.reply_audio(
-                                audio=stream, filename=file.name, title=file.stem, **opts
+                    opts = dict(caption=None, reply_parameters=reply, read_timeout=240, write_timeout=240)
+                    if mode == "mp3":
+                        thumbnail = None
+                        if host_allowed(url, YOUTUBE_DOMAINS):
+                            thumbnail = await prepare_telegram_thumbnail(
+                                file, base / "telegram-cover.jpg"
                             )
-                        elif file.suffix.lower() == ".mp4":
-                            sent = await msg.reply_video(video=stream, supports_streaming=True, **opts)
-                        else:
-                            sent = await msg.reply_document(document=stream, filename=file.name, **opts)
+                        sent = await send_mp3(msg, file, opts, thumbnail)
+                    else:
+                        with file.open("rb") as stream:
+                            if file.suffix.lower() == ".mp4":
+                                sent = await msg.reply_video(video=stream, supports_streaming=True, **opts)
+                            else:
+                                sent = await msg.reply_document(document=stream, filename=file.name, **opts)
                     audit_event(
                         msg, url, "uploaded", mode=mode, quality=label,
                         size_bytes=file.stat().st_size, telegram_message_id=sent.message_id,
