@@ -148,6 +148,10 @@ def build_yt_dlp_command(url: str, folder: Path, fmt: str, mode: str = "video") 
             "--embed-metadata",
             "--format", "bestaudio/best", "--output", str(folder / "%(title).180B.%(ext)s"),
         ]
+        # Embed the video's thumbnail as MP3 cover art for YouTube only.
+        # Convert WebP/other formats to JPG for broad player compatibility.
+        if host_allowed(url, {"youtube.com", "youtu.be", "youtube-nocookie.com"}):
+            command += ["--embed-thumbnail", "--convert-thumbnails", "jpg"]
     else:
         command += [
             "--merge-output-format", "mp4", "--remux-video", "mp4",
