@@ -46,6 +46,27 @@ systemctl restart telegram-video-bot
 
 Send an ordinary short YouTube URL, `/dl https://...`, or reply `/dl` to a message with a supported URL.
 
+## Changing audio/video modes from Telegram
+
+Each group or private chat starts in **video** mode. Use the following commands to configure that chat or override it for a single link:
+
+| Command | Behavior |
+| --- | --- |
+| `/mode` | Display this chat's current default |
+| `/mode mp3` | Switch automatic links in **this chat** to MP3-only |
+| `/mode video` | Return to normal video downloads |
+| `/dl URL` | Download with the chat's default mode |
+| `/mp3 URL` | Download MP3 once without changing the chat's default |
+| `/video URL` | Download video once without changing the chat's default |
+
+`/dl`, `/mp3` and `/video` also work when sent as a reply to a message containing a supported video URL.
+
+**Permissions:** Only Telegram group administrators may change a group's default mode, but any authorized chat member may use the one-off download commands. In private chats, each user controls their own default. Group admins posting anonymously cannot be verified and should temporarily post the mode command as themselves.
+
+MP3 uses yt-dlp and FFmpeg to extract and transcode the best available audio stream into an MP3 (audio-quality setting `5`, VBR). It is sent through Telegram's music player using `sendAudio`, **not** as a voice message. The upload must stay below ~47 MB. Note that the original source audio has a 45 MiB download limit, so very long recordings might fail even if the converted MP3 would be smaller. Like videos, the MP3 files are deleted from the LXC after uploading.
+
+The per-chat settings are stored in `/var/lib/telegram-video-bot/chat-modes.sqlite3` (override with `MODE_DB` in the env file). They persist across restarts and reinstallations, and one group's mode does not affect other groups or private chats. Back up this SQLite file if migrating to another LXC.
+
 ## Management
 
 ```bash
@@ -80,13 +101,13 @@ tail -f /var/lib/telegram-video-bot/downloads.jsonl
 jq -r 'select(.event == "requested") | [.timestamp, .chat_id, .url] | @tsv' /var/lib/telegram-video-bot/downloads.jsonl
 ```
 
-Events: `requested`, `rejected` (queue full), `uploaded` (with quality, size and Telegram output message ID), and `failed` (with reason). Change the history path with `AUDIT_LOG` in `/etc/telegram-video-bot.env`. The existing credentials file is preserved during installation.
+Events: `requested`, `rejected` (queue full), `uploaded` (with selected mode, quality, size and Telegram output message ID), and `failed` (with reason). Change the history path with `AUDIT_LOG` in `/etc/telegram-video-bot.env`. The existing credentials file is preserved during installation.
 
 **Privacy:** These logs include the entire URL, including query parameters that may contain personal or access tokens. Treat the history as sensitive and restrict access. The systemd service uses `UMask=0077`, so newly created history files are accessible only to the service account; root can inspect them too. The JSONL file is not automatically rotated, so manage retention if the bot becomes busy.
 
 ## Behavior and limitations
 
-* One URL/video per source message; `.mp4` is sent as an inline Telegram video, another format as a document.
+* One URL per source message; in video mode `.mp4` is sent as an inline Telegram video, another format as a document. In MP3 mode audio is sent via Telegram's music player.
 * Download jobs run one at a time with at most three outstanding jobs, to avoid excessive RAM/disk use. Files are deleted after upload, including failed downloads. Playlists are restricted to one entry.
 * Only chat IDs listed in `ALLOWED_CHAT_IDS` can trigger downloads, unless it is set to `*` (all groups and private chats). A blank value disables downloads; everyone can use `/id` to look up their chat ID. For a public bot, prefer the explicit allowlist to prevent uncontrolled download jobs.
 * Automatic and manual URLs must match `DEFAULT_DOMAINS` (in `bot.py`) or `EXTRA_DOMAINS` (in env). This is intentional; `yt-dlp` has a generic extractor and it is unsafe to blindly fetch every link submitted to a bot inside a homelab. Add sites explicitly to `EXTRA_DOMAINS`.
